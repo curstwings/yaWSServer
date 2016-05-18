@@ -68,6 +68,19 @@ class ChatSocketHandler(tornado.websocket.WebSocketHandler):
         if self not in ChatSocketHandler.waiters:
             ChatSocketHandler.waiters.add(self)
 
+        chat = {
+            "id": str(uuid.uuid4()),
+            "body": "Hello! User [" + self.id + "]! Welcome!",
+            }
+        #需要有下面這段加工為json，不然writemsg沒效果
+        chat["html"] = tornado.escape.to_basestring(
+            self.render_string("message.html", message=chat))
+
+        for waiter in self.waiters:
+            waiter.write_message(chat)
+            
+        logging.info("來寫個訊息通知大家好惹")
+
     def on_close(self):
         # 連線結束，將此 WebSocket 移除
         # 下面這段還不知道有沒有效果(好像有內)
@@ -84,24 +97,7 @@ class ChatSocketHandler(tornado.websocket.WebSocketHandler):
         if self in ChatSocketHandler.waiters:
             ChatSocketHandler.waiters.remove(self)
 
-    @classmethod
-    def update_cache(cls, chat):
-        cls.cache.append(chat)
-        if len(cls.cache) > cls.cache_size:
-            cls.cache = cls.cache[-cls.cache_size:]
-
-    @classmethod
-    def send_updates(cls, chat, targetid):
-        logging.info("sending message to %d waiters", len(cls.waiters))
-        
-        for waiter in cls.waiters:
-            if cls.external_storage[targetid]['instance'] == waiter:
-                try:
-                    waiter.write_message(chat)
-                    logging.info(cls.waiters)
-                except:
-                    logging.error("Error sending message", exc_info=True)
-
+    #處理收到訊息的事件
     def on_message(self, message):
         logging.info("got message %r", message)
         #將收到訊息以冒號為標記分割成幾段
@@ -120,12 +116,54 @@ class ChatSocketHandler(tornado.websocket.WebSocketHandler):
         
         #可以用self.external_storage[self.id]['instance']來對應waiters裡面的物件！！！！！
         logging.info("self.uuid = " + self.id)
-        logging.info("self.uuid = " + self.external_storage[self.id]['id'])
+        #logging.info("self.uuid = " + self.external_storage[self.id]['id'])
         logging.info("target.id = " + chat['tarid'])
+        logging.info("sending message to: " + chat['tarid'])
+        
+        if chat['tarid'] == '':
+            try:
+                for waiter in self.waiters:
+                    waiter.write_message(chat)
+                logging.info(self)
+            except:
+                logging.error("Error sending message", exc_info=True)
+        else:
+            try:
+                self.external_storage[chat['tarid']]['instance'].write_message(chat)
+                logging.info(self)
+            except:
+                logging.error("Error sending message", exc_info=True)
         
         #if self.external_storage[self.id]
-        ChatSocketHandler.update_cache(chat)
-        ChatSocketHandler.send_updates(chat, chat['tarid'])
+        #ChatSocketHandler.update_cache(chat)
+        #ChatSocketHandler.send_updates(chat, chat['tarid'])
+
+    #不知道要幹嘛
+    @classmethod
+    def update_cache(cls, chat):
+        cls.cache.append(chat)
+        if len(cls.cache) > cls.cache_size:
+            cls.cache = cls.cache[-cls.cache_size:]
+
+    #處理廣播公告加入聊天室事件
+    @classmethod
+    def broadcast(cls, chat):
+        logging.info("sending message to %d waiters", len(cls.waiters))
+        for waiter in cls.waiters:
+            try:
+                waiter.write_message(chat)
+            except:
+                logging.error("Error sending message", exc_info=True)
+
+    #處理推送訊息至指定Client
+    @classmethod
+    def send_updates(cls, chat, targetid):
+        logging.info("sending message to: " + targetid)
+        try:
+            cls.external_storage[targetid]['instance'].write_message(chat)
+            logging.info(cls.waiters)
+        except:
+            logging.error("Error sending message", exc_info=True)
 
 class Application(tornado.web.Application):
     def __init__(self):
